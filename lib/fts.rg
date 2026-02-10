@@ -1,0 +1,146 @@
+# gummy/fts — Full text search powered by SQLite FTS5.
+#
+# Enable search on any model with Model.searchable(columns).
+# This creates an FTS5 virtual table and triggers that keep
+# the index in sync automatically on insert, update, and delete.
+#
+# Usage:
+#
+#   Articles = conn.model("articles", {title: "text", body: "text", author: "text"})
+#   Articles.searchable(["title", "body"])
+#
+#   results = Articles.search("rugo", nil)
+#   for r in results
+#     puts "#{r.title} (score: #{r.rank})"
+#   end
+#
+# FTS5 query syntax passes through:
+#
+#   Articles.search("rugo OR sqlite", nil)        — boolean OR
+#   Articles.search("rugo NOT python", nil)        — boolean NOT
+#   Articles.search("rug*", nil)                   — prefix
+#   Articles.search("title:rugo", nil)             — column filter
+#   Articles.search('"exact phrase"', nil)          — phrase
+#
+# Options hash:
+#
+#   {highlight: ["<b>", "</b>"]}
+#     Wraps matching terms in the search columns.
+#
+#   {snippet: ["...", "<b>", "</b>", 10]}
+#     Returns a .snippet field with context around matches.
+#     Arguments: ellipsis, open tag, close tag, max tokens.
+#
+#   {where: {author: "Alice"}}
+#     Filter by non-FTS columns (standard hash conditions).
+
+use "sqlite"
+use "str"
+use "conv"
+
+# Enable full text search on a model.
+# Columns is an array of column names to index.
+# Creates an FTS5 virtual table and triggers for auto-sync.
+def enable(model)
+  conn = model["__conn__"]
+  table = model["__table__"]
+  fts_table = table + "_fts"
+  columns = model["__fts_columns__"]
+
+  col_list = str.join(columns, ", ")
+
+  # Create FTS5 external content table
+  sqlite.exec(conn, "CREATE VIRTUAL TABLE IF NOT EXISTS " + fts_table + " USING fts5(" + col_list + ", content='" + table + "', content_rowid='id')")
+
+  # Triggers to keep FTS index in sync
+  new_vals = []
+  old_vals = []
+  for col in columns
+    new_vals = append(new_vals, "new." + col)
+    old_vals = append(old_vals, "old." + col)
+  end
+  new_list = str.join(new_vals, ", ")
+  old_list = str.join(old_vals, ", ")
+
+  sqlite.exec(conn, "CREATE TRIGGER IF NOT EXISTS " + table + "_fts_ai AFTER INSERT ON " + table + " BEGIN INSERT INTO " + fts_table + "(rowid, " + col_list + ") VALUES (new.id, " + new_list + "); END")
+
+  sqlite.exec(conn, "CREATE TRIGGER IF NOT EXISTS " + table + "_fts_ad AFTER DELETE ON " + table + " BEGIN INSERT INTO " + fts_table + "(" + fts_table + ", rowid, " + col_list + ") VALUES ('delete', old.id, " + old_list + "); END")
+
+  sqlite.exec(conn, "CREATE TRIGGER IF NOT EXISTS " + table + "_fts_au AFTER UPDATE ON " + table + " BEGIN INSERT INTO " + fts_table + "(" + fts_table + ", rowid, " + col_list + ") VALUES ('delete', old.id, " + old_list + "); INSERT INTO " + fts_table + "(rowid, " + col_list + ") VALUES (new.id, " + new_list + "); END")
+
+  # Index existing rows
+  sqlite.exec(conn, "INSERT INTO " + fts_table + "(" + fts_table + ") VALUES ('rebuild')")
+end
+
+# Search the FTS index.
+# Returns records with .rank, optionally with highlight/snippet/where.
+def search(model, query, opts)
+  conn = model["__conn__"]
+  table = model["__table__"]
+  fts_table = table + "_fts"
+  columns = model["__fts_columns__"]
+
+  select_cols = "a.*, f.rank"
+  extra_keys = []
+  extra_cols = []
+
+  # Highlight: {highlight: ["<b>", "</b>"]}
+  if opts != nil && opts["highlight"] != nil
+    markers = opts["highlight"]
+    open_tag = sql.escape_string(markers[0])
+    close_tag = sql.escape_string(markers[1])
+    i = 0
+    for col in columns
+      hl_alias = "hl_" + col
+      extra_cols = append(extra_cols, "highlight(" + fts_table + ", " + conv.to_s(i) + ", '" + open_tag + "', '" + close_tag + "') as " + hl_alias)
+      extra_keys = append(extra_keys, {col: col, alias: hl_alias})
+      i = i + 1
+    end
+  end
+
+  # Snippet: {snippet: ["...", "<b>", "</b>", 10]}
+  if opts != nil && opts["snippet"] != nil
+    params = opts["snippet"]
+    ellipsis = sql.escape_string(params[0])
+    open_tag = sql.escape_string(params[1])
+    close_tag = sql.escape_string(params[2])
+    max_tokens = conv.to_s(params[3])
+    # Snippet on the first FTS column
+    extra_cols = append(extra_cols, "snippet(" + fts_table + ", 0, '" + open_tag + "', '" + close_tag + "', '" + ellipsis + "', " + max_tokens + ") as snippet")
+  end
+
+  if len(extra_cols) > 0
+    select_cols = select_cols + ", " + str.join(extra_cols, ", ")
+  end
+
+  s = "SELECT " + select_cols + " FROM " + fts_table + " f JOIN " + table + " a ON a.id = f.rowid WHERE " + fts_table + " MATCH ?"
+
+  # Where: {where: {author: "Alice"}}
+  if opts != nil && opts["where"] != nil
+    clause = sql.build_where(opts["where"])
+    s = s + " AND " + clause
+  end
+
+  s = s + " ORDER BY rank"
+
+  safe_query = _escape_fts(query)
+  rows = sqlite.query(conn, s, safe_query)
+  result = []
+  for row in rows
+    # Apply highlighted text back onto the record's columns
+    for ek in extra_keys
+      row[ek["col"]] = row[ek["alias"]]
+    end
+    result = append(result, db.make_record(conn, table, row))
+  end
+  return result
+end
+
+# Escape FTS5 query: wrap terms containing single quotes in double quotes.
+def _escape_fts(query)
+  if str.contains(query, "'")
+    escaped = str.replace(query, '"', '""')
+    return '"' + escaped + '"'
+  end
+  return query
+end

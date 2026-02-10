@@ -1,0 +1,606 @@
+# RATS: gummy ORM — tests the Rugo ORM built on sqlite.
+# Validates: model definition, CRUD, record save/delete,
+# hash conditions, aggregates, lambdas, transactions, FTS.
+
+use "test"
+require ".." with db
+
+def fresh_db()
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", email: "text", age: "integer"})
+  return {conn: conn, users: Users}
+end
+
+# --- open / close ---
+
+rats "open returns a db handle"
+  conn = db.open(":memory:")
+  test.assert_true(conn != nil)
+  conn.close()
+end
+
+# --- model ---
+
+rats "model creates table"
+  env = fresh_db()
+  test.assert_true(env.users != nil)
+  env.conn.close()
+end
+
+# --- insert ---
+
+rats "insert returns record with id"
+  env = fresh_db()
+  alice = env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  test.assert_eq(alice.id, 1)
+  test.assert_eq(alice.name, "Alice")
+  test.assert_eq(alice.email, "a@test.com")
+  test.assert_eq(alice.age, 30)
+  env.conn.close()
+end
+
+rats "insert auto-increments id"
+  env = fresh_db()
+  a = env.users.insert({name: "A", email: "a@test.com", age: 1})
+  b = env.users.insert({name: "B", email: "b@test.com", age: 2})
+  test.assert_eq(a.id, 1)
+  test.assert_eq(b.id, 2)
+  env.conn.close()
+end
+
+# --- find ---
+
+rats "find returns record by id"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  user = env.users.find(1)
+  test.assert_eq(user.name, "Alice")
+  env.conn.close()
+end
+
+rats "find returns nil for missing id"
+  env = fresh_db()
+  user = env.users.find(999)
+  test.assert_nil(user)
+  env.conn.close()
+end
+
+# --- record save ---
+
+rats "record save persists changes"
+  env = fresh_db()
+  alice = env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  alice.name = "Alicia"
+  alice.age = 31
+  alice.save()
+  user = env.users.find(1)
+  test.assert_eq(user.name, "Alicia")
+  test.assert_eq(user.age, 31)
+  env.conn.close()
+end
+
+# --- record delete ---
+
+rats "record delete removes from db"
+  env = fresh_db()
+  alice = env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  alice.delete()
+  test.assert_nil(env.users.find(1))
+  env.conn.close()
+end
+
+# --- all ---
+
+rats "all returns all records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  users = env.users.all()
+  test.assert_eq(len(users), 2)
+  env.conn.close()
+end
+
+rats "all returns empty array when no records"
+  env = fresh_db()
+  users = env.users.all()
+  test.assert_eq(len(users), 0)
+  env.conn.close()
+end
+
+# --- where ---
+
+rats "where filters with equality"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  results = env.users.where({name: "Alice"})
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].name, "Alice")
+  env.conn.close()
+end
+
+rats "where filters with operator in key"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 17})
+  adults = env.users.where({"age >=" => 18})
+  test.assert_eq(len(adults), 1)
+  test.assert_eq(adults[0].name, "Alice")
+  env.conn.close()
+end
+
+rats "where with LIKE operator"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "alice@example.com", age: 30})
+  env.users.insert({name: "Bob", email: "bob@other.com", age: 25})
+  results = env.users.where({"email LIKE" => "%@example.com"})
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].name, "Alice")
+  env.conn.close()
+end
+
+rats "where with multiple conditions ANDs them"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Alice", email: "a2@test.com", age: 25})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 30})
+  results = env.users.where({name: "Alice", "age >=" => 30})
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].email, "a@test.com")
+  env.conn.close()
+end
+
+rats "where returns empty array on no match"
+  env = fresh_db()
+  results = env.users.where({name: "Nobody"})
+  test.assert_eq(len(results), 0)
+  env.conn.close()
+end
+
+# --- first ---
+
+rats "first returns matching record"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  user = env.users.first({name: "Bob"})
+  test.assert_eq(user.name, "Bob")
+  env.conn.close()
+end
+
+rats "first returns nil on no match"
+  env = fresh_db()
+  user = env.users.first({name: "Nobody"})
+  test.assert_nil(user)
+  env.conn.close()
+end
+
+# --- count ---
+
+rats "count all records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  test.assert_eq(env.users.count(nil), 2)
+  env.conn.close()
+end
+
+rats "count with condition"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 17})
+  test.assert_eq(env.users.count({"age >=" => 18}), 1)
+  env.conn.close()
+end
+
+rats "count returns 0 on empty table"
+  env = fresh_db()
+  test.assert_eq(env.users.count(nil), 0)
+  env.conn.close()
+end
+
+# --- pluck ---
+
+rats "pluck returns array of values"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  names = env.users.pluck("name")
+  test.assert_eq(len(names), 2)
+  test.assert_eq(names[0], "Alice")
+  test.assert_eq(names[1], "Bob")
+  env.conn.close()
+end
+
+# --- exists ---
+
+rats "exists returns true when match found"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  test.assert_true(env.users.exists({name: "Alice"}))
+  env.conn.close()
+end
+
+rats "exists returns false when no match"
+  env = fresh_db()
+  test.assert_false(env.users.exists({name: "Nobody"}))
+  env.conn.close()
+end
+
+# --- each ---
+
+rats "each iterates over all records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  names = []
+  env.users.each(fn(u)
+    names = append(names, u.name)
+  end)
+  test.assert_eq(len(names), 2)
+  test.assert_eq(names[0], "Alice")
+  test.assert_eq(names[1], "Bob")
+  env.conn.close()
+end
+
+# --- map ---
+
+rats "map transforms records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  emails = env.users.map(fn(u) u.email end)
+  test.assert_eq(len(emails), 2)
+  test.assert_eq(emails[0], "a@test.com")
+  test.assert_eq(emails[1], "b@test.com")
+  env.conn.close()
+end
+
+# --- destroy ---
+
+rats "destroy deletes matching records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 17})
+  env.users.insert({name: "Kid", email: "k@test.com", age: 12})
+  env.users.destroy({"age <" => 18})
+  test.assert_eq(env.users.count(nil), 1)
+  test.assert_eq(env.users.find(1).name, "Alice")
+  env.conn.close()
+end
+
+# --- update_all ---
+
+rats "update_all updates matching records"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 65})
+  env.users.insert({name: "Bob", email: "b@test.com", age: 70})
+  env.users.insert({name: "Young", email: "y@test.com", age: 20})
+  env.users.update_all({"age >=" => 65}, {name: "Senior"})
+  seniors = env.users.where({name: "Senior"})
+  test.assert_eq(len(seniors), 2)
+  young = env.users.first({name: "Young"})
+  test.assert_eq(young.name, "Young")
+  env.conn.close()
+end
+
+# --- transactions ---
+
+rats "tx commits on success"
+  env = fresh_db()
+  env.conn.tx(fn()
+    env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+    env.users.insert({name: "Bob", email: "b@test.com", age: 25})
+  end)
+  test.assert_eq(env.users.count(nil), 2)
+  env.conn.close()
+end
+
+rats "tx rolls back on error"
+  env = fresh_db()
+  env.users.insert({name: "Before", email: "b@test.com", age: 30})
+  bad_tx = fn()
+    env.users.insert({name: "Rolled", email: "r@test.com", age: 25})
+    raise("boom")
+  end
+  result = try env.conn.tx(bad_tx) or "failed"
+  test.assert_eq(result, "failed")
+  test.assert_eq(env.users.count(nil), 1)
+  test.assert_eq(env.users.find(1).name, "Before")
+  env.conn.close()
+end
+
+# --- SQL injection safety ---
+
+rats "quote escapes single quotes"
+  env = fresh_db()
+  env.users.insert({name: "O'Brien", email: "o@test.com", age: 30})
+  user = env.users.first({name: "O'Brien"})
+  test.assert_eq(user.name, "O'Brien")
+  env.conn.close()
+end
+
+rats "quote handles nil values"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: nil, age: 30})
+  user = env.users.find(1)
+  test.assert_eq(user.name, "Alice")
+  test.assert_nil(user.email)
+  env.conn.close()
+end
+
+rats "SQL injection in value is escaped"
+  env = fresh_db()
+  evil = "'; DROP TABLE users; --"
+  env.users.insert({name: evil, email: "e@test.com", age: 1})
+  user = env.users.first({name: evil})
+  test.assert_eq(user.name, evil)
+  test.assert_eq(env.users.count(nil), 1)
+  env.conn.close()
+end
+
+rats "invalid column name in where is rejected"
+  env = fresh_db()
+  result = try env.users.where({"name; DROP TABLE users" => "x"}) or "caught"
+  test.assert_eq(result, "caught")
+  env.conn.close()
+end
+
+rats "invalid column name in insert is rejected"
+  env = fresh_db()
+  result = try env.users.insert({"name; DROP TABLE users" => "x"}) or "caught"
+  test.assert_eq(result, "caught")
+  env.conn.close()
+end
+
+rats "invalid operator in where is rejected"
+  env = fresh_db()
+  result = try env.users.where({"age ;DROP" => 1}) or "caught"
+  test.assert_eq(result, "caught")
+  env.conn.close()
+end
+
+rats "valid operators are accepted"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  test.assert_eq(len(env.users.where({"age >=" => 18})), 1)
+  test.assert_eq(len(env.users.where({"age <" => 100})), 1)
+  test.assert_eq(len(env.users.where({"age !=" => 0})), 1)
+  test.assert_eq(len(env.users.where({"name LIKE" => "Ali%"})), 1)
+  env.conn.close()
+end
+
+rats "invalid column name in pluck is rejected"
+  env = fresh_db()
+  result = try env.users.pluck("name; DROP TABLE users") or "caught"
+  test.assert_eq(result, "caught")
+  env.conn.close()
+end
+
+rats "invalid column name in update_all is rejected"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  result = try env.users.update_all({name: "Alice"}, {"age; DROP" => 1}) or "caught"
+  test.assert_eq(result, "caught")
+  env.conn.close()
+end
+
+# --- multiple models ---
+
+rats "multiple models are independent"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Posts = conn.model("posts", {title: "text", user_id: "integer"})
+
+  alice = Users.insert({name: "Alice", age: 30})
+  Posts.insert({title: "Hello", user_id: alice.id})
+
+  test.assert_eq(Users.count(nil), 1)
+  test.assert_eq(Posts.count(nil), 1)
+
+  post = Posts.first({user_id: 1})
+  test.assert_eq(post.title, "Hello")
+  conn.close()
+end
+
+# --- records from queries have save/delete ---
+
+rats "records from all() have save"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  users = env.users.all()
+  users[0].name = "Modified"
+  users[0].save()
+  user = env.users.find(1)
+  test.assert_eq(user.name, "Modified")
+  env.conn.close()
+end
+
+rats "records from where() have delete"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  users = env.users.where({name: "Alice"})
+  users[0].delete()
+  test.assert_eq(env.users.count(nil), 0)
+  env.conn.close()
+end
+
+rats "records from first() have save"
+  env = fresh_db()
+  env.users.insert({name: "Alice", email: "a@test.com", age: 30})
+  user = env.users.first({name: "Alice"})
+  user.email = "new@test.com"
+  user.save()
+  updated = env.users.find(1)
+  test.assert_eq(updated.email, "new@test.com")
+  env.conn.close()
+end
+
+# ============================================================
+# FTS — Full Text Search
+# ============================================================
+
+def fresh_fts_db()
+  conn = db.open(":memory:")
+  Articles = conn.model("articles", {title: "text", body: "text", author: "text"})
+  Articles.searchable(["title", "body"])
+  return {conn: conn, articles: Articles}
+end
+
+# --- searchable ---
+
+rats "searchable enables FTS on a model"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Hello Rugo", body: "Rugo is great.", author: "Alice"})
+  results = env.articles.search("rugo", nil)
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].title, "Hello Rugo")
+  env.conn.close()
+end
+
+# --- basic search ---
+
+rats "search returns ranked results"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Language", body: "Rugo compiles to Go.", author: "Alice"})
+  env.articles.insert({title: "SQLite Guide", body: "FTS5 is powerful.", author: "Bob"})
+  env.articles.insert({title: "CLI Tools", body: "Build CLIs with Rugo.", author: "Alice"})
+  results = env.articles.search("rugo", nil)
+  test.assert_eq(len(results), 2)
+  test.assert_true(results[0].rank != nil)
+  env.conn.close()
+end
+
+rats "search returns empty array on no match"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Hello", body: "World", author: "Alice"})
+  results = env.articles.search("nonexistent", nil)
+  test.assert_eq(len(results), 0)
+  env.conn.close()
+end
+
+# --- FTS5 query syntax ---
+
+rats "search supports boolean OR"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Guide", body: "A language.", author: "Alice"})
+  env.articles.insert({title: "SQLite Guide", body: "A database.", author: "Bob"})
+  env.articles.insert({title: "Other", body: "Nothing here.", author: "Charlie"})
+  results = env.articles.search("rugo OR sqlite", nil)
+  test.assert_eq(len(results), 2)
+  env.conn.close()
+end
+
+rats "search supports prefix queries"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Language", body: "Great.", author: "Alice"})
+  results = env.articles.search("rug*", nil)
+  test.assert_eq(len(results), 1)
+  env.conn.close()
+end
+
+rats "search supports column filter"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Title", body: "No match here.", author: "Alice"})
+  env.articles.insert({title: "Other", body: "Rugo in body only.", author: "Bob"})
+  results = env.articles.search("title:rugo", nil)
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].title, "Rugo Title")
+  env.conn.close()
+end
+
+# --- highlight ---
+
+rats "search with highlight replaces column text"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Hello Rugo", body: "Rugo is great.", author: "Alice"})
+  results = env.articles.search("rugo", {highlight: ["<b>", "</b>"]})
+  test.assert_eq(len(results), 1)
+  test.assert_contains(results[0].title, "<b>Rugo</b>")
+  test.assert_contains(results[0].body, "<b>Rugo</b>")
+  env.conn.close()
+end
+
+# --- snippet ---
+
+rats "search with snippet returns snippet field"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Hello Rugo", body: "Rugo is a Ruby-inspired language that compiles to native binaries via Go.", author: "Alice"})
+  results = env.articles.search("rugo", {snippet: ["...", "<b>", "</b>", 10]})
+  test.assert_eq(len(results), 1)
+  test.assert_true(results[0].snippet != nil)
+  test.assert_contains(results[0].snippet, "<b>Rugo</b>")
+  env.conn.close()
+end
+
+# --- where filter ---
+
+rats "search with where filters by non-FTS columns"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo by Alice", body: "Great language.", author: "Alice"})
+  env.articles.insert({title: "Rugo by Bob", body: "Also great.", author: "Bob"})
+  results = env.articles.search("rugo", {where: {author: "Alice"}})
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].author, "Alice")
+  env.conn.close()
+end
+
+# --- auto-sync ---
+
+rats "FTS index updates on record save"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Original Title", body: "Some content.", author: "Alice"})
+  article = env.articles.find(1)
+  article.title = "Updated Gummy Title"
+  article.save()
+  results = env.articles.search("gummy", nil)
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].title, "Updated Gummy Title")
+  old = env.articles.search("original", nil)
+  test.assert_eq(len(old), 0)
+  env.conn.close()
+end
+
+rats "FTS index updates on record delete"
+  env = fresh_fts_db()
+  env.articles.insert({title: "To Delete", body: "Rugo content.", author: "Alice"})
+  env.articles.insert({title: "To Keep", body: "Also Rugo.", author: "Bob"})
+  article = env.articles.find(1)
+  article.delete()
+  results = env.articles.search("rugo", nil)
+  test.assert_eq(len(results), 1)
+  test.assert_eq(results[0].title, "To Keep")
+  env.conn.close()
+end
+
+# --- records from search have save/delete ---
+
+rats "records from search have save"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Guide", body: "Content.", author: "Alice"})
+  results = env.articles.search("rugo", nil)
+  results[0].author = "Modified"
+  results[0].save()
+  check = env.articles.find(1)
+  test.assert_eq(check.author, "Modified")
+  env.conn.close()
+end
+
+rats "records from search have delete"
+  env = fresh_fts_db()
+  env.articles.insert({title: "Rugo Guide", body: "Content.", author: "Alice"})
+  results = env.articles.search("rugo", nil)
+  results[0].delete()
+  test.assert_eq(env.articles.count(nil), 0)
+  env.conn.close()
+end
+
+# --- SQL injection in search ---
+
+rats "search escapes single quotes in query"
+  env = fresh_fts_db()
+  env.articles.insert({title: "It's great", body: "Content.", author: "Alice"})
+  results = env.articles.search("it's", nil)
+  test.assert_eq(len(results), 1)
+  env.conn.close()
+end

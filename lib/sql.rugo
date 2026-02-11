@@ -66,10 +66,10 @@ def build_where(conditions)
       tokens = str.split(key, " ")
       col = validate_ident(tokens[0], "column")
       op = validate_op(tokens[1])
-      parts = append(parts, col + " " + op + " " + quote(val))
+      append parts, col + " " + op + " " + quote(val)
     else
       validate_ident(key, "column")
-      parts = append(parts, key + " = " + quote(val))
+      append parts, key + " = " + quote(val)
     end
   end
   return str.join(parts, " AND ")

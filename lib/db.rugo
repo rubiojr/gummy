@@ -80,8 +80,8 @@ def _make_model(conn, name, columns)
   col_defs = []
   col_names = []
   for key, val in columns
-    col_defs = append(col_defs, key + " " + str.upper(val))
-    col_names = append(col_names, key)
+    append col_defs, key + " " + str.upper(val)
+    append col_names, key
   end
 
   create_sql = "CREATE TABLE IF NOT EXISTS " + name + " (id INTEGER PRIMARY KEY"
@@ -199,8 +199,8 @@ def _insert(conn, table, attrs)
   values = []
   for key, val in attrs
     sql.validate_ident(key, "column")
-    names = append(names, key)
-    values = append(values, sql.quote(val))
+    append names, key
+    append values, sql.quote(val)
   end
   s = "INSERT INTO " + table + " (" + str.join(names, ", ") + ") VALUES (" + str.join(values, ", ") + ")"
   sqlite.exec(conn, s)
@@ -222,7 +222,7 @@ def _all(conn, table)
   rows = sqlite.query(conn, s)
   result = []
   for row in rows
-    result = append(result, make_record(conn, table, row))
+    append result, make_record(conn, table, row)
   end
   return result
 end
@@ -233,7 +233,7 @@ def _where(conn, table, conditions)
   rows = sqlite.query(conn, s)
   result = []
   for row in rows
-    result = append(result, make_record(conn, table, row))
+    append result, make_record(conn, table, row)
   end
   return result
 end
@@ -263,7 +263,7 @@ def _pluck(conn, table, column)
   rows = sqlite.query(conn, s)
   result = []
   for row in rows
-    result = append(result, row[column])
+    append result, row[column]
   end
   return result
 end

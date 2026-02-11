@@ -10,15 +10,15 @@
 # Model handles provide:
 #
 # - Model.insert(attrs) — insert a record, returns it with .id
-# - Model.find(id) — find by id, returns record or nil
-# - Model.all() — all records
+# - Model.get(id) — find by id, returns record or nil
+# - Model.list() — all records
 # - Model.where(conditions) — filtered records (hash conditions)
 # - Model.first(conditions) — first match or nil
-# - Model.count(conditions) — count records (pass nil for all)
+# - Model.tally(conditions) — count records (pass nil for all)
 # - Model.pluck(column) — array of values from one column
 # - Model.exists(conditions) — true if any match
-# - Model.each(fn) — iterate with lambda
-# - Model.map(fn) — transform with lambda
+# - Model.for_each(fn) — iterate with lambda
+# - Model.collect(fn) — transform with lambda
 # - Model.destroy(conditions) — delete matching records
 # - Model.update_all(conditions, attrs) — bulk update
 # - Model.searchable(columns) — enable FTS5 (see fts module)
@@ -100,11 +100,11 @@ def _make_model(conn, name, columns)
     return _insert(conn, name, attrs)
   end
 
-  model["find"] = fn(id)
+  model["get"] = fn(id)
     return _find(conn, name, id)
   end
 
-  model["all"] = fn()
+  model["list"] = fn()
     return _all(conn, name)
   end
 
@@ -116,7 +116,7 @@ def _make_model(conn, name, columns)
     return _first(conn, name, conditions)
   end
 
-  model["count"] = fn(conditions)
+  model["tally"] = fn(conditions)
     return _count(conn, name, conditions)
   end
 
@@ -128,14 +128,14 @@ def _make_model(conn, name, columns)
     return _count(conn, name, conditions) > 0
   end
 
-  model["each"] = fn(callback)
+  model["for_each"] = fn(callback)
     rows = _all(conn, name)
     for row in rows
       callback(row)
     end
   end
 
-  model["map"] = fn(callback)
+  model["collect"] = fn(callback)
     rows = _all(conn, name)
     result = []
     for row in rows
@@ -218,7 +218,8 @@ def _find(conn, table, id)
 end
 
 def _all(conn, table)
-  rows = sqlite.query(conn, "SELECT * FROM " + table)
+  s = sql.query(table).to_sql()
+  rows = sqlite.query(conn, s)
   result = []
   for row in rows
     result = append(result, make_record(conn, table, row))
@@ -228,7 +229,8 @@ end
 
 def _where(conn, table, conditions)
   clause = sql.build_where(conditions)
-  rows = sqlite.query(conn, "SELECT * FROM " + table + " WHERE " + clause)
+  s = sql.query(table).where(clause).to_sql()
+  rows = sqlite.query(conn, s)
   result = []
   for row in rows
     result = append(result, make_record(conn, table, row))
@@ -238,7 +240,8 @@ end
 
 def _first(conn, table, conditions)
   clause = sql.build_where(conditions)
-  row = sqlite.query_row(conn, "SELECT * FROM " + table + " WHERE " + clause + " LIMIT 1")
+  s = sql.query(table).where(clause).limit(1).to_sql()
+  row = sqlite.query_row(conn, s)
   if row == nil
     return nil
   end
@@ -246,16 +249,18 @@ def _first(conn, table, conditions)
 end
 
 def _count(conn, table, conditions)
-  if conditions == nil
-    return sqlite.query_val(conn, "SELECT COUNT(*) FROM " + table)
+  q = sql.query(table).select("COUNT(*)")
+  if conditions != nil
+    clause = sql.build_where(conditions)
+    q = q.where(clause)
   end
-  clause = sql.build_where(conditions)
-  return sqlite.query_val(conn, "SELECT COUNT(*) FROM " + table + " WHERE " + clause)
+  return sqlite.query_val(conn, q.to_sql())
 end
 
 def _pluck(conn, table, column)
   sql.validate_ident(column, "column")
-  rows = sqlite.query(conn, "SELECT " + column + " FROM " + table)
+  s = sql.query(table).select(column).to_sql()
+  rows = sqlite.query(conn, s)
   result = []
   for row in rows
     result = append(result, row[column])

@@ -1,0 +1,263 @@
+# RATS: sql.query — tests for the chainable SELECT query builder.
+# Validates: select, where, order_by, limit, to_sql, chaining,
+# multiple conditions, table validation, and all combinations.
+
+use "test"
+require ".." with db
+require "../lib/sql"
+
+# --- basic query ---
+
+rats "query generates SELECT * FROM table"
+  s = sql.query("users").to_sql()
+  test.assert_eq(s, "SELECT * FROM users")
+end
+
+# --- select ---
+
+rats "query with custom select"
+  s = sql.query("users").select("name, email").to_sql()
+  test.assert_eq(s, "SELECT name, email FROM users")
+end
+
+rats "query with COUNT(*) select"
+  s = sql.query("users").select("COUNT(*)").to_sql()
+  test.assert_eq(s, "SELECT COUNT(*) FROM users")
+end
+
+# --- where ---
+
+rats "query with single where clause"
+  s = sql.query("users").where("age >= 18").to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE age >= 18")
+end
+
+rats "query with multiple where clauses ANDs them"
+  s = sql.query("users").where("age >= 18").where("active = 1").to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE age >= 18 AND active = 1")
+end
+
+rats "query with three where clauses"
+  s = sql.query("users")
+    .where("age >= 18")
+    .where("active = 1")
+    .where("name = 'Alice'")
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE age >= 18 AND active = 1 AND name = 'Alice'")
+end
+
+# --- order_by ---
+
+rats "query with order_by"
+  s = sql.query("users").order_by("name").to_sql()
+  test.assert_eq(s, "SELECT * FROM users ORDER BY name")
+end
+
+rats "query with order_by DESC"
+  s = sql.query("users").order_by("age DESC").to_sql()
+  test.assert_eq(s, "SELECT * FROM users ORDER BY age DESC")
+end
+
+# --- limit ---
+
+rats "query with limit"
+  s = sql.query("users").limit(10).to_sql()
+  test.assert_eq(s, "SELECT * FROM users LIMIT 10")
+end
+
+rats "query with limit 1"
+  s = sql.query("users").limit(1).to_sql()
+  test.assert_eq(s, "SELECT * FROM users LIMIT 1")
+end
+
+# --- full chains ---
+
+rats "query with where + order_by + limit"
+  s = sql.query("users")
+    .where("age >= 18")
+    .order_by("name")
+    .limit(10)
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE age >= 18 ORDER BY name LIMIT 10")
+end
+
+rats "query with select + where + order_by + limit"
+  s = sql.query("users")
+    .select("name, email")
+    .where("active = 1")
+    .order_by("name ASC")
+    .limit(5)
+    .to_sql()
+  test.assert_eq(s, "SELECT name, email FROM users WHERE active = 1 ORDER BY name ASC LIMIT 5")
+end
+
+rats "query with COUNT + where"
+  s = sql.query("users")
+    .select("COUNT(*)")
+    .where("age >= 18")
+    .to_sql()
+  test.assert_eq(s, "SELECT COUNT(*) FROM users WHERE age >= 18")
+end
+
+rats "query with multiple where + limit (no order)"
+  s = sql.query("users")
+    .where("age >= 18")
+    .where("email LIKE '%@test.com'")
+    .limit(1)
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE age >= 18 AND email LIKE '%@test.com' LIMIT 1")
+end
+
+# --- chaining returns same builder ---
+
+rats "where returns the builder for chaining"
+  q = sql.query("users")
+  q2 = q.where("age >= 18")
+  test.assert_eq(q.to_sql(), q2.to_sql())
+end
+
+rats "select returns the builder for chaining"
+  q = sql.query("users")
+  q2 = q.select("name")
+  test.assert_eq(q.to_sql(), q2.to_sql())
+end
+
+rats "order_by returns the builder for chaining"
+  q = sql.query("users")
+  q2 = q.order_by("name")
+  test.assert_eq(q.to_sql(), q2.to_sql())
+end
+
+rats "limit returns the builder for chaining"
+  q = sql.query("users")
+  q2 = q.limit(5)
+  test.assert_eq(q.to_sql(), q2.to_sql())
+end
+
+# --- table validation ---
+
+rats "query rejects invalid table name"
+  result = try sql.query("users; DROP TABLE x") or "caught"
+  test.assert_eq(result, "caught")
+end
+
+rats "query rejects empty table name"
+  result = try sql.query("") or "caught"
+  test.assert_eq(result, "caught")
+end
+
+rats "query rejects table name with spaces"
+  result = try sql.query("my table") or "caught"
+  test.assert_eq(result, "caught")
+end
+
+# --- build_where integration ---
+
+rats "query with build_where conditions"
+  clause = sql.build_where({name: "Alice", "age >=" => 18})
+  s = sql.query("users").where(clause).limit(1).to_sql()
+  test.assert_contains(s, "SELECT * FROM users WHERE")
+  test.assert_contains(s, "LIMIT 1")
+  test.assert_contains(s, "name = 'Alice'")
+  test.assert_contains(s, "age >= 18")
+end
+
+# --- used by ORM internals ---
+
+rats "query builder produces correct SQL for list operation"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Users.insert({name: "Alice", age: 30})
+  Users.insert({name: "Bob", age: 25})
+  users = Users.list()
+  test.assert_eq(len(users), 2)
+  test.assert_eq(users[0].name, "Alice")
+  test.assert_eq(users[1].name, "Bob")
+  conn.close()
+end
+
+rats "query builder produces correct SQL for where operation"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Users.insert({name: "Alice", age: 30})
+  Users.insert({name: "Bob", age: 17})
+  adults = Users.where({"age >=" => 18})
+  test.assert_eq(len(adults), 1)
+  test.assert_eq(adults[0].name, "Alice")
+  conn.close()
+end
+
+rats "query builder produces correct SQL for first operation"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Users.insert({name: "Alice", age: 30})
+  Users.insert({name: "Bob", age: 25})
+  user = Users.first({name: "Bob"})
+  test.assert_eq(user.name, "Bob")
+  conn.close()
+end
+
+rats "query builder produces correct SQL for tally operation"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Users.insert({name: "Alice", age: 30})
+  Users.insert({name: "Bob", age: 25})
+  test.assert_eq(Users.tally(nil), 2)
+  test.assert_eq(Users.tally({"age >=" => 30}), 1)
+  conn.close()
+end
+
+rats "query builder produces correct SQL for pluck operation"
+  conn = db.open(":memory:")
+  Users = conn.model("users", {name: "text", age: "integer"})
+  Users.insert({name: "Alice", age: 30})
+  Users.insert({name: "Bob", age: 25})
+  names = Users.pluck("name")
+  test.assert_eq(names[0], "Alice")
+  test.assert_eq(names[1], "Bob")
+  conn.close()
+end
+
+# --- different tables ---
+
+rats "query builder works with different table names"
+  s1 = sql.query("users").where("active = 1").to_sql()
+  s2 = sql.query("posts").where("published = 1").to_sql()
+  test.assert_eq(s1, "SELECT * FROM users WHERE active = 1")
+  test.assert_eq(s2, "SELECT * FROM posts WHERE published = 1")
+end
+
+# --- order of clauses ---
+
+rats "clauses appear in correct order regardless of call order"
+  s = sql.query("users")
+    .limit(5)
+    .where("active = 1")
+    .order_by("name")
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users WHERE active = 1 ORDER BY name LIMIT 5")
+end
+
+rats "select override replaces previous select"
+  s = sql.query("users")
+    .select("name")
+    .select("email")
+    .to_sql()
+  test.assert_eq(s, "SELECT email FROM users")
+end
+
+rats "order_by override replaces previous order"
+  s = sql.query("users")
+    .order_by("name")
+    .order_by("age DESC")
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users ORDER BY age DESC")
+end
+
+rats "limit override replaces previous limit"
+  s = sql.query("users")
+    .limit(10)
+    .limit(5)
+    .to_sql()
+  test.assert_eq(s, "SELECT * FROM users LIMIT 5")
+end

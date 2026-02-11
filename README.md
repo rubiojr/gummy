@@ -19,7 +19,7 @@ alice.name = "Alicia"
 alice.save()
 
 adults = Users.where({"age >=" => 18})
-Users.each(fn(u) puts u.name end)
+Users.for_each(fn(u) puts u.name end)
 
 conn.close()
 ```

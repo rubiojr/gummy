@@ -50,17 +50,17 @@ end
 
 # --- find ---
 
-rats "find returns record by id"
+rats "get returns record by id"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
-  user = env.users.find(1)
+  user = env.users.get(1)
   test.assert_eq(user.name, "Alice")
   env.conn.close()
 end
 
-rats "find returns nil for missing id"
+rats "get returns nil for missing id"
   env = fresh_db()
-  user = env.users.find(999)
+  user = env.users.get(999)
   test.assert_nil(user)
   env.conn.close()
 end
@@ -73,7 +73,7 @@ rats "record save persists changes"
   alice.name = "Alicia"
   alice.age = 31
   alice.save()
-  user = env.users.find(1)
+  user = env.users.get(1)
   test.assert_eq(user.name, "Alicia")
   test.assert_eq(user.age, 31)
   env.conn.close()
@@ -85,24 +85,24 @@ rats "record delete removes from db"
   env = fresh_db()
   alice = env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   alice.delete()
-  test.assert_nil(env.users.find(1))
+  test.assert_nil(env.users.get(1))
   env.conn.close()
 end
 
 # --- all ---
 
-rats "all returns all records"
+rats "list returns all records"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   env.users.insert({name: "Bob", email: "b@test.com", age: 25})
-  users = env.users.all()
+  users = env.users.list()
   test.assert_eq(len(users), 2)
   env.conn.close()
 end
 
-rats "all returns empty array when no records"
+rats "list returns empty array when no records"
   env = fresh_db()
-  users = env.users.all()
+  users = env.users.list()
   test.assert_eq(len(users), 0)
   env.conn.close()
 end
@@ -177,25 +177,25 @@ end
 
 # --- count ---
 
-rats "count all records"
+rats "tally all records"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   env.users.insert({name: "Bob", email: "b@test.com", age: 25})
-  test.assert_eq(env.users.count(nil), 2)
+  test.assert_eq(env.users.tally(nil), 2)
   env.conn.close()
 end
 
-rats "count with condition"
+rats "tally with condition"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   env.users.insert({name: "Bob", email: "b@test.com", age: 17})
-  test.assert_eq(env.users.count({"age >=" => 18}), 1)
+  test.assert_eq(env.users.tally({"age >=" => 18}), 1)
   env.conn.close()
 end
 
-rats "count returns 0 on empty table"
+rats "tally returns 0 on empty table"
   env = fresh_db()
-  test.assert_eq(env.users.count(nil), 0)
+  test.assert_eq(env.users.tally(nil), 0)
   env.conn.close()
 end
 
@@ -229,12 +229,12 @@ end
 
 # --- each ---
 
-rats "each iterates over all records"
+rats "for_each iterates over all records"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   env.users.insert({name: "Bob", email: "b@test.com", age: 25})
   names = []
-  env.users.each(fn(u)
+  env.users.for_each(fn(u)
     names = append(names, u.name)
   end)
   test.assert_eq(len(names), 2)
@@ -245,11 +245,11 @@ end
 
 # --- map ---
 
-rats "map transforms records"
+rats "collect transforms records"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   env.users.insert({name: "Bob", email: "b@test.com", age: 25})
-  emails = env.users.map(fn(u) u.email end)
+  emails = env.users.collect(fn(u) u.email end)
   test.assert_eq(len(emails), 2)
   test.assert_eq(emails[0], "a@test.com")
   test.assert_eq(emails[1], "b@test.com")
@@ -264,8 +264,8 @@ rats "destroy deletes matching records"
   env.users.insert({name: "Bob", email: "b@test.com", age: 17})
   env.users.insert({name: "Kid", email: "k@test.com", age: 12})
   env.users.destroy({"age <" => 18})
-  test.assert_eq(env.users.count(nil), 1)
-  test.assert_eq(env.users.find(1).name, "Alice")
+  test.assert_eq(env.users.tally(nil), 1)
+  test.assert_eq(env.users.get(1).name, "Alice")
   env.conn.close()
 end
 
@@ -292,7 +292,7 @@ rats "tx commits on success"
     env.users.insert({name: "Alice", email: "a@test.com", age: 30})
     env.users.insert({name: "Bob", email: "b@test.com", age: 25})
   end)
-  test.assert_eq(env.users.count(nil), 2)
+  test.assert_eq(env.users.tally(nil), 2)
   env.conn.close()
 end
 
@@ -305,8 +305,8 @@ rats "tx rolls back on error"
   end
   result = try env.conn.tx(bad_tx) or "failed"
   test.assert_eq(result, "failed")
-  test.assert_eq(env.users.count(nil), 1)
-  test.assert_eq(env.users.find(1).name, "Before")
+  test.assert_eq(env.users.tally(nil), 1)
+  test.assert_eq(env.users.get(1).name, "Before")
   env.conn.close()
 end
 
@@ -323,7 +323,7 @@ end
 rats "quote handles nil values"
   env = fresh_db()
   env.users.insert({name: "Alice", email: nil, age: 30})
-  user = env.users.find(1)
+  user = env.users.get(1)
   test.assert_eq(user.name, "Alice")
   test.assert_nil(user.email)
   env.conn.close()
@@ -335,7 +335,7 @@ rats "SQL injection in value is escaped"
   env.users.insert({name: evil, email: "e@test.com", age: 1})
   user = env.users.first({name: evil})
   test.assert_eq(user.name, evil)
-  test.assert_eq(env.users.count(nil), 1)
+  test.assert_eq(env.users.tally(nil), 1)
   env.conn.close()
 end
 
@@ -395,8 +395,8 @@ rats "multiple models are independent"
   alice = Users.insert({name: "Alice", age: 30})
   Posts.insert({title: "Hello", user_id: alice.id})
 
-  test.assert_eq(Users.count(nil), 1)
-  test.assert_eq(Posts.count(nil), 1)
+  test.assert_eq(Users.tally(nil), 1)
+  test.assert_eq(Posts.tally(nil), 1)
 
   post = Posts.first({user_id: 1})
   test.assert_eq(post.title, "Hello")
@@ -405,13 +405,13 @@ end
 
 # --- records from queries have save/delete ---
 
-rats "records from all() have save"
+rats "records from list() have save"
   env = fresh_db()
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
-  users = env.users.all()
+  users = env.users.list()
   users[0].name = "Modified"
   users[0].save()
-  user = env.users.find(1)
+  user = env.users.get(1)
   test.assert_eq(user.name, "Modified")
   env.conn.close()
 end
@@ -421,7 +421,7 @@ rats "records from where() have delete"
   env.users.insert({name: "Alice", email: "a@test.com", age: 30})
   users = env.users.where({name: "Alice"})
   users[0].delete()
-  test.assert_eq(env.users.count(nil), 0)
+  test.assert_eq(env.users.tally(nil), 0)
   env.conn.close()
 end
 
@@ -431,7 +431,7 @@ rats "records from first() have save"
   user = env.users.first({name: "Alice"})
   user.email = "new@test.com"
   user.save()
-  updated = env.users.find(1)
+  updated = env.users.get(1)
   test.assert_eq(updated.email, "new@test.com")
   env.conn.close()
 end
@@ -550,7 +550,7 @@ end
 rats "FTS index updates on record save"
   env = fresh_fts_db()
   env.articles.insert({title: "Original Title", body: "Some content.", author: "Alice"})
-  article = env.articles.find(1)
+  article = env.articles.get(1)
   article.title = "Updated Gummy Title"
   article.save()
   results = env.articles.search("gummy", nil)
@@ -565,7 +565,7 @@ rats "FTS index updates on record delete"
   env = fresh_fts_db()
   env.articles.insert({title: "To Delete", body: "Rugo content.", author: "Alice"})
   env.articles.insert({title: "To Keep", body: "Also Rugo.", author: "Bob"})
-  article = env.articles.find(1)
+  article = env.articles.get(1)
   article.delete()
   results = env.articles.search("rugo", nil)
   test.assert_eq(len(results), 1)
@@ -581,7 +581,7 @@ rats "records from search have save"
   results = env.articles.search("rugo", nil)
   results[0].author = "Modified"
   results[0].save()
-  check = env.articles.find(1)
+  check = env.articles.get(1)
   test.assert_eq(check.author, "Modified")
   env.conn.close()
 end
@@ -591,7 +591,7 @@ rats "records from search have delete"
   env.articles.insert({title: "Rugo Guide", body: "Content.", author: "Alice"})
   results = env.articles.search("rugo", nil)
   results[0].delete()
-  test.assert_eq(env.articles.count(nil), 0)
+  test.assert_eq(env.articles.tally(nil), 0)
   env.conn.close()
 end
 

@@ -74,3 +74,56 @@ def build_where(conditions)
   end
   return str.join(parts, " AND ")
 end
+
+# Build a chainable SELECT query for a table.
+# Each method returns the query hash, enabling fluid chaining.
+#
+#   sql.query("users").where(clause).order_by("name").limit(10).to_sql()
+#
+def query(table)
+  validate_ident(table, "table")
+
+  q = {
+    __table__: table,
+    __select__: "*",
+    __conditions__: [],
+    __order__: nil,
+    __limit__: nil
+  }
+
+  q["select"] = fn(cols)
+    q.__select__ = cols
+    return q
+  end
+
+  q["where"] = fn(clause)
+    q.__conditions__ = append(q.__conditions__, clause)
+    return q
+  end
+
+  q["order_by"] = fn(field)
+    q.__order__ = field
+    return q
+  end
+
+  q["limit"] = fn(n)
+    q.__limit__ = n
+    return q
+  end
+
+  q["to_sql"] = fn()
+    s = "SELECT " + q.__select__ + " FROM " + q.__table__
+    if len(q.__conditions__) > 0
+      s = s + " WHERE " + str.join(q.__conditions__, " AND ")
+    end
+    if q.__order__ != nil
+      s = s + " ORDER BY " + q.__order__
+    end
+    if q.__limit__ != nil
+      s = s + " LIMIT " + conv.to_s(q.__limit__)
+    end
+    return s
+  end
+
+  return q
+end

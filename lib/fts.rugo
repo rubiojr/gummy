@@ -56,8 +56,8 @@ def enable(model)
   new_vals = []
   old_vals = []
   for col in columns
-    new_vals = append(new_vals, "new." + col)
-    old_vals = append(old_vals, "old." + col)
+    append new_vals, "new." + col
+    append old_vals, "old." + col
   end
   new_list = str.join(new_vals, ", ")
   old_list = str.join(old_vals, ", ")
@@ -91,9 +91,9 @@ def search(model, query, opts)
     close_tag = sql.escape_string(markers[1])
     i = 0
     for col in columns
-      hl_alias = "hl_" + col
-      extra_cols = append(extra_cols, "highlight(" + fts_table + ", " + conv.to_s(i) + ", '" + open_tag + "', '" + close_tag + "') as " + hl_alias)
-      extra_keys = append(extra_keys, {col: col, alias: hl_alias})
+      hl_alias = "hl_#{col}"
+      append extra_cols, "highlight(" + fts_table + ", " + conv.to_s(i) + ", '" + open_tag + "', '" + close_tag + "') as " + hl_alias
+      append extra_keys, {col: col, alias: hl_alias}
       i = i + 1
     end
   end
@@ -106,7 +106,7 @@ def search(model, query, opts)
     close_tag = sql.escape_string(params[2])
     max_tokens = conv.to_s(params[3])
     # Snippet on the first FTS column
-    extra_cols = append(extra_cols, "snippet(" + fts_table + ", 0, '" + open_tag + "', '" + close_tag + "', '" + ellipsis + "', " + max_tokens + ") as snippet")
+    append extra_cols, "snippet(" + fts_table + ", 0, '" + open_tag + "', '" + close_tag + "', '" + ellipsis + "', " + max_tokens + ") as snippet"
   end
 
   if len(extra_cols) > 0
@@ -131,7 +131,7 @@ def search(model, query, opts)
     for ek in extra_keys
       row[ek["col"]] = row[ek["alias"]]
     end
-    result = append(result, db.make_record(conn, table, row))
+    append result, db.make_record(conn, table, row)
   end
   return result
 end
